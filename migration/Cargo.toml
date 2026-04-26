@@ -1,0 +1,14 @@
+[package]
+edition = "2024"
+name = "migration"
+publish = false
+rust-version = "1.85.0"
+version = "0.1.0"
+
+[lib]
+name = "migration"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { workspace = true, features = [ "rt" ] }
+sea-orm-migration = { version = "2.0.0-rc", features = ["sqlx-sqlite", "runtime-tokio"] }

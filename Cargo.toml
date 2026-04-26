@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = [".", "api", "entity", "migration"]
+
+[package]
+name = "register_spf"
+version = "0.0.1"
+authors = ["SimplePixelFont"]
+edition = "2024"
+license = "Apache-2.0"
+
+[dependencies]
+api = { path = "./api" }
+
+[workspace.dependencies]
+sea-orm = { version = "2.0.0-rc" }
+tokio = { version = "1.51.1", features = ["macros", "rt-multi-thread"] }
