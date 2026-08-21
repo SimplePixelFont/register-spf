@@ -60,8 +60,9 @@ pub async fn search_snippets(
 ) -> Result<Json<Vec<SnippetInfo>>, AppError> {
     use sea_orm::*;
 
-    let mut query_builder =
-        snippets::Entity::find().filter(snippets::Column::Status.eq("approved"));
+    let mut query_builder = snippets::Entity::find()
+        .filter(snippets::Column::Status.eq("approved"))
+        .order_by_desc(snippets::Column::CreatedAt);
 
     if let Some(q) = query.query {
         query_builder = query_builder.filter(snippets::Column::Name.contains(&q));
