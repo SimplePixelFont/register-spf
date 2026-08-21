@@ -7,6 +7,7 @@ pub mod comments;
 pub mod font_tags;
 pub mod font_versions;
 pub mod fonts;
+pub mod snippets;
 pub mod tags;
 pub mod user_favorites;
 pub mod users;
