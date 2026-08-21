@@ -43,6 +43,16 @@ pub struct CommentWithUser {
 }
 
 #[derive(Serialize)]
+pub struct SnippetInfo {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub source: String,
+    pub created_at: DateTime<Utc>,
+    pub user: Option<PublicUser>,
+}
+
+#[derive(Serialize)]
 pub struct AuthResponse {
     pub user: PublicUser,
     pub token: String,
@@ -94,5 +104,18 @@ pub struct CreateCommentRequest {
 pub struct SearchQuery {
     pub query: Option<String>,
     pub tags: Option<String>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Deserialize)]
+pub struct CreateSnippetRequest {
+    pub name: String,
+    pub description: Option<String>,
+    pub source: String,
+}
+
+#[derive(Deserialize)]
+pub struct SnippetSearchQuery {
+    pub query: Option<String>,
     pub limit: Option<i64>,
 }
