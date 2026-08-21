@@ -81,6 +81,7 @@ pub enum RateLimitTier {
     Anonymous,
     Comment,
     FontUpload,
+    SnippetSubmit,
 }
 
 impl RateLimitTier {
@@ -92,11 +93,15 @@ impl RateLimitTier {
             RateLimitTier::Anonymous => 10,
             RateLimitTier::Comment => 10,
             RateLimitTier::FontUpload => 1,
+            RateLimitTier::SnippetSubmit => 3,
         }
     }
 
     fn window_duration(&self) -> std::time::Duration {
-        std::time::Duration::from_secs(60)
+        match self {
+            RateLimitTier::SnippetSubmit => std::time::Duration::from_secs(3600),
+            _ => std::time::Duration::from_secs(60),
+        }
     }
 }
 
@@ -111,6 +116,7 @@ pub struct RateLimiter {
     token_limits: DashMap<String, RateLimitEntry>,
     font_upload_limits: DashMap<String, RateLimitEntry>,
     comment_limits: DashMap<String, RateLimitEntry>,
+    snippet_submit_limits: DashMap<String, RateLimitEntry>,
     trusted_domains: Vec<String>,
 }
 
@@ -121,6 +127,7 @@ impl RateLimiter {
             token_limits: DashMap::new(),
             font_upload_limits: DashMap::new(),
             comment_limits: DashMap::new(),
+            snippet_submit_limits: DashMap::new(),
             trusted_domains,
         }
     }
@@ -151,6 +158,14 @@ impl RateLimiter {
         )
     }
 
+    pub fn check_snippet_submit(&self, key: &str) -> bool {
+        Self::check_limit(
+            &self.snippet_submit_limits,
+            key,
+            RateLimitTier::SnippetSubmit,
+        )
+    }
+
     fn check_limit(
         limits: &DashMap<String, RateLimitEntry>,
         key: &str,
@@ -177,19 +192,36 @@ impl RateLimiter {
     }
 
     pub fn cleanup(&self) {
-        let cutoff = Instant::now() - Duration::from_secs(120);
+        let now = Instant::now();
 
+        // ip_limits/token_limits are shared across several tiers that are
+        // all still 60s windows today, so the existing flat 120s (2x
+        // headroom) cutoff stays correct for them.
+        let shared_cutoff = now - Duration::from_secs(120);
         self.ip_limits
-            .retain(|_, entry| entry.window_start > cutoff);
-
+            .retain(|_, entry| entry.window_start > shared_cutoff);
         self.token_limits
-            .retain(|_, entry| entry.window_start > cutoff);
+            .retain(|_, entry| entry.window_start > shared_cutoff);
 
+        // font_upload_limits/comment_limits/snippet_submit_limits are each
+        // dedicated to exactly one tier, so their cutoff is that tier's own
+        // window_duration() (with the same 2x headroom) instead of a
+        // constant that silently assumes every tier is 60s. Without this,
+        // a >120s window (like SnippetSubmit's 3600s) would have its entry
+        // deleted at the very first cleanup tick after 120s -- the count
+        // resets to 0 on the next request, and the "3/hour" limit is
+        // effectively never enforced.
+        let font_upload_cutoff = now - RateLimitTier::FontUpload.window_duration() * 2;
         self.font_upload_limits
-            .retain(|_, entry| entry.window_start > cutoff);
+            .retain(|_, entry| entry.window_start > font_upload_cutoff);
 
+        let comment_cutoff = now - RateLimitTier::Comment.window_duration() * 2;
         self.comment_limits
-            .retain(|_, entry| entry.window_start > cutoff);
+            .retain(|_, entry| entry.window_start > comment_cutoff);
+
+        let snippet_submit_cutoff = now - RateLimitTier::SnippetSubmit.window_duration() * 2;
+        self.snippet_submit_limits
+            .retain(|_, entry| entry.window_start > snippet_submit_cutoff);
     }
 }
 
@@ -257,6 +289,34 @@ pub async fn font_upload_limit_middleware(
         if !state.rate_limiter.check_font_upload(&user_key) {
             return Err(AppError::TooManyRequests(
                 "User upload rate limit exceeded (1/min).".into(),
+            ));
+        }
+    }
+
+    Ok(next.run(request).await)
+}
+
+pub async fn snippet_submit_limit_middleware(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    let ip = addr.ip().to_string();
+
+    if !state.rate_limiter.check_snippet_submit(&ip) {
+        let tier = RateLimitTier::SnippetSubmit;
+        let msg = format!(
+            "IP snippet submission rate limit exceeded ({}/hour).",
+            tier.max_requests()
+        );
+        return Err(AppError::TooManyRequests(msg));
+    }
+    if let Some(user) = request.extensions().get::<AuthUser>() {
+        let user_key = format!("user:{}", user.id);
+        if !state.rate_limiter.check_snippet_submit(&user_key) {
+            return Err(AppError::TooManyRequests(
+                "User snippet submission rate limit exceeded (3/hour).".into(),
             ));
         }
     }
