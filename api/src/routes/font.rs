@@ -2,7 +2,7 @@ use crate::{
     AppState,
     error::AppError,
     model::{FontVersionInfo, FontWithDetails, SearchQuery},
-    utilities::{AuthUser, get_r2_client_and_bucket, upload_file},
+    utilities::{AuthUser, get_r2_client_and_bucket, upload_file, validate_font},
 };
 use ::entity::{comments, font_tags, font_versions, fonts, tags};
 use axum::{
@@ -10,7 +10,6 @@ use axum::{
     extract::{Multipart, Path, Query, State},
     http::StatusCode,
 };
-use rustrict::CensorStr;
 use spf::core::layout_from_data;
 
 pub async fn get_font_with_details(
@@ -123,31 +122,7 @@ pub async fn create_font(
         }
     }
 
-    if name.is_inappropriate() {
-        return Err(AppError::bad_request("Name contains inappropriate content"));
-    }
-    if let Some(desc) = &description {
-        if desc.is_inappropriate() {
-            return Err(AppError::bad_request(
-                "Description contains inappropriate content",
-            ));
-        }
-    }
-    for tag in &tags_input {
-        if tag.is_inappropriate() {
-            return Err(AppError::bad_request("Tag contains inappropriate content"));
-        }
-    }
-    if tags_input.len() > 10 {
-        return Err(AppError::bad_request("Too many tags"));
-    }
-    if let Some(changelog) = &changelog {
-        if changelog.is_inappropriate() {
-            return Err(AppError::bad_request(
-                "Changelog contains inappropriate content",
-            ));
-        }
-    }
+    validate_font(&name, &slug, &description, &tags_input, &changelog)?;
 
     let same_slug = fonts::Entity::find()
         .filter(fonts::Column::Slug.eq(slug.clone()))
