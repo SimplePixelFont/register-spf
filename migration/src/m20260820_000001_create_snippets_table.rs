@@ -21,7 +21,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Snippets::UserId).integer())
                     .col(ColumnDef::new(Snippets::Name).string().not_null())
                     .col(ColumnDef::new(Snippets::Description).text())
-                    .col(ColumnDef::new(Snippets::Source).text().not_null())
+                    .col(ColumnDef::new(Snippets::Uuid).text().not_null())
                     .col(
                         ColumnDef::new(Snippets::Status)
                             .string()
@@ -73,7 +73,7 @@ enum Snippets {
     UserId,
     Name,
     Description,
-    Source,
+    Uuid,
     Status,
     CreatedAt,
 }

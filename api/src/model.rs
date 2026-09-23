@@ -47,7 +47,7 @@ pub struct SnippetInfo {
     pub id: i64,
     pub name: String,
     pub description: Option<String>,
-    pub source: String,
+    pub uuid: String,
     pub created_at: DateTime<Utc>,
     pub user: Option<PublicUser>,
 }

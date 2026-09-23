@@ -2,7 +2,7 @@ use crate::{
     AppState,
     error::AppError,
     model::{CreateSnippetRequest, PublicUser, SnippetInfo, SnippetSearchQuery},
-    utilities::{AuthUser, validate_snippet},
+    utilities::{AuthUser, get_r2_client_and_bucket, upload_file, validate_snippet},
 };
 use ::entity::{snippets, users};
 use axum::{
@@ -10,13 +10,14 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
 };
+use uuid::Uuid;
 
 fn to_snippet_info(model: snippets::Model, user: Option<users::Model>) -> SnippetInfo {
     SnippetInfo {
         id: model.id,
         name: model.name,
         description: model.description,
-        source: model.source,
+        uuid: model.uuid,
         created_at: model.created_at,
         user: user.map(|u| PublicUser {
             id: u.id,
@@ -32,17 +33,28 @@ pub async fn create_snippet(
 ) -> Result<Json<SnippetInfo>, AppError> {
     use sea_orm::*;
 
+    let (client, r2_bucket) = get_r2_client_and_bucket().await?;
+
     validate_snippet(
         &payload.name,
         payload.description.as_deref(),
         &payload.source,
     )?;
 
+    let uuid = Uuid::new_v4();
+    upload_file(
+        &client,
+        &r2_bucket,
+        &format!("snippets/{}", uuid.to_string()),
+        payload.source.into(),
+    )
+    .await?;
+
     let snippet_model = snippets::ActiveModel {
         user_id: Set(Some(auth.id)),
         name: Set(payload.name),
         description: Set(payload.description),
-        source: Set(payload.source),
+        uuid: Set(uuid.to_string()),
         status: Set("approved".to_string()),
         ..Default::default()
     };
