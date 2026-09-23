@@ -139,5 +139,10 @@ pub async fn delete_snippet(
         .exec(&state.db)
         .await?;
 
+    let (client, r2_bucket) = get_r2_client_and_bucket().await?;
+    let _ = client
+        .delete_object(&r2_bucket, &format!("snippets/{}", snippet.uuid))
+        .await;
+
     Ok(StatusCode::NO_CONTENT)
 }
