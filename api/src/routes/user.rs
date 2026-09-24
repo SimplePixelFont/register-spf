@@ -7,7 +7,7 @@ use crate::{
     },
     utilities::{
         AuthUser, create_api_key, create_session, create_user, is_unique_email, is_unique_username,
-        list_user_tokens, revoke_token,
+        is_url_component_safe, list_user_tokens, revoke_token,
     },
 };
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
@@ -37,8 +37,15 @@ pub async fn register(
             "Username must be between 3 and 30 characters",
         ));
     }
+    if !is_url_component_safe(username) {
+        return Err(AppError::bad_request(
+            "Username contains invalid characters",
+        ));
+    }
     if username.is_inappropriate() {
-        return Err(AppError::bad_request("Username contains inappropriate content"));
+        return Err(AppError::bad_request(
+            "Username contains inappropriate content",
+        ));
     }
     if password.len() < 8 || password.len() > 50 {
         return Err(AppError::bad_request(

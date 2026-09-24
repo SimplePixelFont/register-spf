@@ -7,6 +7,15 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
+            .alter_table(
+                Table::alter()
+                    .table(Users::Table)
+                    .add_column(ColumnDef::new(Users::DisplayName).string())
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
             .create_table(
                 Table::create()
                     .table(Snippets::Table)
@@ -62,6 +71,15 @@ impl MigrationTrait for Migration {
             .drop_table(Table::drop().table(Snippets::Table).to_owned())
             .await?;
 
+        manager
+            .alter_table(
+                Table::alter()
+                    .table(Users::Table)
+                    .drop_column(Users::DisplayName)
+                    .to_owned(),
+            )
+            .await?;
+
         Ok(())
     }
 }
@@ -82,4 +100,5 @@ enum Snippets {
 enum Users {
     Table,
     Id,
+    DisplayName,
 }

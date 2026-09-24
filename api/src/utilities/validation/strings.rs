@@ -2,16 +2,32 @@ use crate::error::AppError;
 use rustrict::CensorStr;
 use unicode_segmentation::UnicodeSegmentation;
 
-fn validate_slug(s: &str) -> bool {
+const SMALL_STRING_MAX_GRAPHEME_LENGTH: usize = 80;
+const SMALL_STRING_MAX_BYTE_LENGTH: usize = 640;
+
+const MEDIUM_STRING_MAX_GRAPHEME_LENGTH: usize = 200;
+const MEDIUM_STRING_MAX_BYTE_LENGTH: usize = 1600;
+
+const LARGE_STRING_MAX_GRAPHEME_LENGTH: usize = 500;
+const LARGE_STRING_MAX_BYTE_LENGTH: usize = 4000;
+
+pub fn is_url_component_safe(s: &str) -> bool {
     s.chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~')
 }
 
 pub fn validate_comment(text: &str) -> Result<(), AppError> {
-    if text.graphemes(true).count() > 200 {
-        return Err(AppError::bad_request(
-            "Comment too long (max 200 characters)",
-        ));
+    if text.graphemes(true).count() > MEDIUM_STRING_MAX_GRAPHEME_LENGTH {
+        return Err(AppError::bad_request(format!(
+            "Comment too long (max {} characters)",
+            MEDIUM_STRING_MAX_GRAPHEME_LENGTH
+        )));
+    }
+    if text.len() > MEDIUM_STRING_MAX_BYTE_LENGTH {
+        return Err(AppError::bad_request(format!(
+            "Comment exceeded byte limit (max {} bytes)",
+            MEDIUM_STRING_MAX_BYTE_LENGTH
+        )));
     }
     if text.is_inappropriate() {
         return Err(AppError::bad_request(
@@ -31,25 +47,32 @@ pub fn validate_font(
     if name.is_inappropriate() {
         return Err(AppError::bad_request("Name contains inappropriate content"));
     }
-    if name.graphemes(true).count() > 100 {
-        return Err(AppError::bad_request("Name too long (max 100 characters)"));
+    if name.graphemes(true).count() > SMALL_STRING_MAX_GRAPHEME_LENGTH {
+        return Err(AppError::bad_request(format!(
+            "Name too long (max {} characters)",
+            SMALL_STRING_MAX_GRAPHEME_LENGTH
+        )));
     }
-    if name.len() > 800 {
-        return Err(AppError::bad_request(
-            "Name exceeded byte limit (max 800 bytes)",
-        ));
+    if name.len() > SMALL_STRING_MAX_BYTE_LENGTH {
+        return Err(AppError::bad_request(format!(
+            "Name exceeded byte limit (max {} bytes)",
+            SMALL_STRING_MAX_BYTE_LENGTH
+        )));
     }
 
     if slug.is_empty() {
         return Err(AppError::bad_request("Slug is required"));
     }
-    if slug.len() > 100 {
-        return Err(AppError::bad_request("Slug too long (max 100 characters)"));
+    if slug.len() > SMALL_STRING_MAX_GRAPHEME_LENGTH {
+        return Err(AppError::bad_request(format!(
+            "Slug too long (max {} characters)",
+            SMALL_STRING_MAX_GRAPHEME_LENGTH
+        )));
     }
     if slug.is_inappropriate() {
         return Err(AppError::bad_request("Slug contains inappropriate content"));
     }
-    if !validate_slug(slug) {
+    if !is_url_component_safe(slug) {
         return Err(AppError::bad_request("Slug contains invalid characters"));
     }
 
@@ -59,21 +82,26 @@ pub fn validate_font(
                 "Description contains inappropriate content",
             ));
         }
-        if desc.graphemes(true).count() > 1000 {
-            return Err(AppError::bad_request(
-                "Description too long (max 1000 characters)",
-            ));
+        if desc.graphemes(true).count() > LARGE_STRING_MAX_GRAPHEME_LENGTH {
+            return Err(AppError::bad_request(format!(
+                "Description too long (max {} characters)",
+                LARGE_STRING_MAX_GRAPHEME_LENGTH
+            )));
         }
-        if desc.len() > 8000 {
-            return Err(AppError::bad_request(
-                "Description exceeded byte limit (max 8000 bytes)",
-            ));
+        if desc.len() > LARGE_STRING_MAX_BYTE_LENGTH {
+            return Err(AppError::bad_request(format!(
+                "Description exceeded byte limit (max {} bytes)",
+                LARGE_STRING_MAX_BYTE_LENGTH
+            )));
         }
     }
 
     for tag in tags_input {
-        if tag.len() > 80 {
-            return Err(AppError::bad_request("Tag too long (max 50 characters)"));
+        if tag.len() > SMALL_STRING_MAX_GRAPHEME_LENGTH {
+            return Err(AppError::bad_request(format!(
+                "Tag too long (max {} characters)",
+                SMALL_STRING_MAX_GRAPHEME_LENGTH
+            )));
         }
         if tag.is_inappropriate() {
             return Err(AppError::bad_request("Tag contains inappropriate content"));
@@ -88,15 +116,17 @@ pub fn validate_font(
                 "Changelog contains inappropriate content",
             ));
         }
-        if changelog.graphemes(true).count() > 1000 {
-            return Err(AppError::bad_request(
-                "Changelog too long (max 1000 characters)",
-            ));
+        if changelog.graphemes(true).count() > LARGE_STRING_MAX_GRAPHEME_LENGTH {
+            return Err(AppError::bad_request(format!(
+                "Changelog too long (max {} characters)",
+                LARGE_STRING_MAX_GRAPHEME_LENGTH
+            )));
         }
-        if changelog.len() > 8000 {
-            return Err(AppError::bad_request(
-                "Changelog exceeded byte limit (max 8000 bytes)",
-            ));
+        if changelog.len() > LARGE_STRING_MAX_BYTE_LENGTH {
+            return Err(AppError::bad_request(format!(
+                "Changelog exceeded byte limit (max {} bytes)",
+                LARGE_STRING_MAX_BYTE_LENGTH
+            )));
         }
     }
 
@@ -111,32 +141,38 @@ pub fn validate_snippet(
     if name.is_empty() {
         return Err(AppError::bad_request("Name is required"));
     }
-    if name.graphemes(true).count() > 100 {
-        return Err(AppError::bad_request("Name too long (max 100 characters)"));
+    if name.graphemes(true).count() > SMALL_STRING_MAX_GRAPHEME_LENGTH {
+        return Err(AppError::bad_request(format!(
+            "Name too long (max {} characters)",
+            SMALL_STRING_MAX_GRAPHEME_LENGTH
+        )));
     }
-    if name.len() > 800 {
-        return Err(AppError::bad_request(
-            "Name exceeded byte limit (max 800 bytes)",
-        ));
+    if name.len() > SMALL_STRING_MAX_BYTE_LENGTH {
+        return Err(AppError::bad_request(format!(
+            "Name exceeded byte limit (max {} bytes)",
+            SMALL_STRING_MAX_BYTE_LENGTH
+        )));
     }
     if name.is_inappropriate() {
         return Err(AppError::bad_request("Name contains inappropriate content"));
     }
     if let Some(desc) = description {
-        if desc.graphemes(true).count() > 500 {
-            return Err(AppError::bad_request(
-                "Description too long (max 500 characters)",
-            ));
+        if desc.graphemes(true).count() > LARGE_STRING_MAX_GRAPHEME_LENGTH {
+            return Err(AppError::bad_request(format!(
+                "Description too long (max {} characters)",
+                LARGE_STRING_MAX_GRAPHEME_LENGTH
+            )));
         }
         if desc.is_inappropriate() {
             return Err(AppError::bad_request(
                 "Description contains inappropriate content",
             ));
         }
-        if desc.len() > 4000 {
-            return Err(AppError::bad_request(
-                "Description exceeded byte limit (max 4000 bytes)",
-            ));
+        if desc.len() > LARGE_STRING_MAX_BYTE_LENGTH {
+            return Err(AppError::bad_request(format!(
+                "Description exceeded byte limit (max {} bytes)",
+                LARGE_STRING_MAX_BYTE_LENGTH
+            )));
         }
     }
     if source.is_empty() {
