@@ -5,6 +5,7 @@ pub use super::comments::Entity as Comments;
 pub use super::font_tags::Entity as FontTags;
 pub use super::font_versions::Entity as FontVersions;
 pub use super::fonts::Entity as Fonts;
+pub use super::snippets::Entity as Snippets;
 pub use super::tags::Entity as Tags;
 pub use super::user_favorites::Entity as UserFavorites;
 pub use super::users::Entity as Users;

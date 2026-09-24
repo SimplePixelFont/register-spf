@@ -1,0 +1,148 @@
+use crate::{
+    AppState,
+    error::AppError,
+    model::{CreateSnippetRequest, PublicUser, SnippetInfo, SnippetSearchQuery},
+    utilities::{AuthUser, get_r2_client_and_bucket, upload_file, validate_snippet},
+};
+use ::entity::{snippets, users};
+use axum::{
+    Json,
+    extract::{Path, Query, State},
+    http::StatusCode,
+};
+use uuid::Uuid;
+
+fn to_snippet_info(model: snippets::Model, user: Option<users::Model>) -> SnippetInfo {
+    SnippetInfo {
+        id: model.id,
+        name: model.name,
+        description: model.description,
+        uuid: model.uuid,
+        created_at: model.created_at,
+        user: user.map(|u| PublicUser {
+            id: u.id,
+            username: u.username,
+        }),
+    }
+}
+
+pub async fn create_snippet(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(payload): Json<CreateSnippetRequest>,
+) -> Result<Json<SnippetInfo>, AppError> {
+    use sea_orm::*;
+
+    let (client, r2_bucket) = get_r2_client_and_bucket().await?;
+
+    validate_snippet(
+        &payload.name,
+        payload.description.as_deref(),
+        &payload.source,
+    )?;
+
+    let uuid = Uuid::new_v4();
+    upload_file(
+        &client,
+        &r2_bucket,
+        &format!("snippets/{}", uuid.to_string()),
+        payload.source.into(),
+    )
+    .await?;
+
+    let snippet_model = snippets::ActiveModel {
+        user_id: Set(Some(auth.id)),
+        name: Set(payload.name),
+        description: Set(payload.description),
+        uuid: Set(uuid.to_string()),
+        status: Set("approved".to_string()),
+        ..Default::default()
+    };
+
+    let snippet = snippet_model.insert(&state.db).await?;
+
+    let user = users::Entity::find_by_id(auth.id).one(&state.db).await?;
+
+    Ok(Json(to_snippet_info(snippet, user)))
+}
+
+pub async fn search_snippets(
+    State(state): State<AppState>,
+    Query(query): Query<SnippetSearchQuery>,
+) -> Result<Json<Vec<SnippetInfo>>, AppError> {
+    use sea_orm::*;
+
+    let mut query_builder = snippets::Entity::find()
+        .filter(snippets::Column::Status.eq("approved"))
+        .order_by_desc(snippets::Column::CreatedAt);
+
+    if let Some(q) = query.query {
+        query_builder = query_builder.filter(snippets::Column::Name.contains(&q));
+    }
+
+    let limit = query.limit.unwrap_or(50).clamp(1, 50);
+    query_builder = query_builder.limit(limit as u64);
+
+    let snippet_list = query_builder.all(&state.db).await?;
+
+    let mut result = Vec::new();
+    for snippet in snippet_list {
+        let user = match snippet.user_id {
+            Some(uid) => users::Entity::find_by_id(uid).one(&state.db).await?,
+            None => None,
+        };
+        result.push(to_snippet_info(snippet, user));
+    }
+
+    Ok(Json(result))
+}
+
+pub async fn get_snippet(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<SnippetInfo>, AppError> {
+    use sea_orm::*;
+
+    let snippet = snippets::Entity::find_by_id(id)
+        .filter(snippets::Column::Status.eq("approved"))
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Snippet not found".to_string()))?;
+
+    let user = match snippet.user_id {
+        Some(uid) => users::Entity::find_by_id(uid).one(&state.db).await?,
+        None => None,
+    };
+
+    Ok(Json(to_snippet_info(snippet, user)))
+}
+
+pub async fn delete_snippet(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, AppError> {
+    use sea_orm::*;
+
+    let snippet = snippets::Entity::find_by_id(id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Snippet not found".to_string()))?;
+
+    if snippet.user_id != Some(auth.id) {
+        return Err(AppError::Forbidden(
+            "You do not have permission to delete this snippet".into(),
+        ));
+    }
+
+    snippets::Entity::delete_by_id(snippet.id)
+        .exec(&state.db)
+        .await?;
+
+    let (client, r2_bucket) = get_r2_client_and_bucket().await?;
+    let _ = client
+        .delete_object(&r2_bucket, &format!("snippets/{}", snippet.uuid))
+        .await;
+
+    Ok(StatusCode::NO_CONTENT)
+}

@@ -14,6 +14,7 @@ pub struct Model {
     pub password_hash: String,
     pub role: String,
     pub created_at: DateTimeUtc,
+    pub display_name: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -24,6 +25,8 @@ pub enum Relation {
     Comments,
     #[sea_orm(has_many = "super::fonts::Entity")]
     Fonts,
+    #[sea_orm(has_many = "super::snippets::Entity")]
+    Snippets,
     #[sea_orm(has_many = "super::user_favorites::Entity")]
     UserFavorites,
 }
@@ -43,6 +46,12 @@ impl Related<super::comments::Entity> for Entity {
 impl Related<super::fonts::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Fonts.def()
+    }
+}
+
+impl Related<super::snippets::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Snippets.def()
     }
 }
 

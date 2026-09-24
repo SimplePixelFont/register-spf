@@ -2,7 +2,7 @@ use crate::{
     AppState,
     error::AppError,
     model::{FontVersionInfo, FontWithDetails, SearchQuery},
-    utilities::{AuthUser, get_r2_client_and_bucket},
+    utilities::{AuthUser, get_r2_client_and_bucket, upload_file, validate_font},
 };
 use ::entity::{comments, font_tags, font_versions, fonts, tags};
 use axum::{
@@ -10,8 +10,6 @@ use axum::{
     extract::{Multipart, Path, Query, State},
     http::StatusCode,
 };
-use minima_r2_sdk::{Bytes, CompleteMultipartUploadRequest, CompletedPart, UploadPartRequest};
-use rustrict::CensorStr;
 use spf::core::layout_from_data;
 
 pub async fn get_font_with_details(
@@ -124,27 +122,7 @@ pub async fn create_font(
         }
     }
 
-    if name.is_inappropriate() {
-        return Err(AppError::bad_request("Name contains inappropriate content"));
-    }
-    if let Some(desc) = &description {
-        if desc.is_inappropriate() {
-            return Err(AppError::bad_request("Description contains inappropriate content"));
-        }
-    }
-    for tag in &tags_input {
-        if tag.is_inappropriate() {
-            return Err(AppError::bad_request("Tag contains inappropriate content"));
-        }
-    }
-    if tags_input.len() > 10 {
-        return Err(AppError::bad_request("Too many tags"));
-    }
-    if let Some(changelog) = &changelog {
-        if changelog.is_inappropriate() {
-            return Err(AppError::bad_request("Changelog contains inappropriate content"));
-        }
-    }
+    validate_font(&name, &slug, &description, &tags_input, &changelog)?;
 
     let same_slug = fonts::Entity::find()
         .filter(fonts::Column::Slug.eq(slug.clone()))
@@ -154,39 +132,10 @@ pub async fn create_font(
         return Err(AppError::bad_request("Slug is already taken"));
     }
 
-
     let (_, data) = file_data.ok_or_else(|| AppError::bad_request("File is required"))?;
     layout_from_data(&data)?;
-    let file_path = format!("{}/{}-v{}.spf", slug, slug, version);
-
-    let upload = client
-        .create_multipart_upload(&r2_bucket, &file_path)
-        .await
-        .map_err(|e| AppError::Internal(format!("R2 Upload Init Failed: {}", e)))?;
-
-    let part = client
-        .upload_part(UploadPartRequest {
-            bucket: &r2_bucket,
-            key: &file_path,
-            upload_id: &upload.upload_id,
-            part_number: 1,
-            body: Bytes::from(data),
-        })
-        .await
-        .map_err(|e| AppError::Internal(format!("R2 Part Upload Failed: {}", e)))?;
-
-    client
-        .complete_multipart_upload(CompleteMultipartUploadRequest {
-            bucket: &r2_bucket,
-            key: &file_path,
-            upload_id: &upload.upload_id,
-            parts: vec![CompletedPart {
-                part_number: 1,
-                etag: part.etag,
-            }],
-        })
-        .await
-        .map_err(|e| AppError::Internal(format!("R2 Completion Failed: {}", e)))?;
+    let file_path = format!("fonts/{}-v{}.spf", slug, version);
+    upload_file(&client, &r2_bucket, &file_path, data.into()).await?;
 
     let font_model = fonts::ActiveModel {
         name: Set(name),

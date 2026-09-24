@@ -3,6 +3,7 @@ pub mod prelude;
 pub mod access_tokens;
 pub mod comments;
 pub mod fonts;
+pub mod snippets;
 pub mod users;
 pub mod tags;
 pub mod font_tags;

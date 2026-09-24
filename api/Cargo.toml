@@ -30,3 +30,5 @@ spf = "=0.8.0-alpha.0"
 tracing = "0.1"
 tracing-subscriber = "0.3.0"
 entity = { path = "../entity" }
+unicode-segmentation = "1.13.3"
+uuid = { version = "1.26.1", features = ["v4"] }

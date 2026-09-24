@@ -3,7 +3,7 @@ use crate::{
     utilities::tasks::run_cleanup_tasks,
     utilities::{
         AuthCache, RateLimiter, comment_limit_middleware, font_upload_limit_middleware,
-        rate_limit_middleware,
+        rate_limit_middleware, snippet_submit_limit_middleware,
     },
 };
 use axum::{
@@ -16,6 +16,7 @@ use routes::{
     comment::{create_comment, delete_comment, get_comments},
     favorite::add_favorite,
     font::{create_font, delete_font, get_font_with_details, search_fonts},
+    snippet::{create_snippet, delete_snippet, get_snippet, search_snippets},
     user::{create_user_api_key, get_my_tokens, register, revoke_my_token},
     version::create_version,
 };
@@ -86,11 +87,24 @@ fn comment_routes(state: AppState) -> Router<AppState> {
         .route("/{id}", delete(delete_comment))
 }
 
+fn snippet_routes(state: AppState) -> Router<AppState> {
+    Router::new()
+        .route("/", post(create_snippet))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            snippet_submit_limit_middleware,
+        ))
+        .route("/search", get(search_snippets))
+        .route("/{id}", get(get_snippet))
+        .route("/{id}", delete(delete_snippet))
+}
+
 fn api_routes(state: AppState) -> Router<AppState> {
     Router::new()
         .nest("/auth", auth_routes())
         .nest("/fonts", font_routes(state.clone()))
         .nest("/comments", comment_routes(state.clone()))
+        .nest("/snippets", snippet_routes(state.clone()))
 }
 
 #[tokio::main]
