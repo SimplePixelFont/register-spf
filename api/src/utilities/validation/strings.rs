@@ -34,7 +34,15 @@ pub fn validate_font(
     if name.graphemes(true).count() > 100 {
         return Err(AppError::bad_request("Name too long (max 100 characters)"));
     }
+    if name.len() > 800 {
+        return Err(AppError::bad_request(
+            "Name exceeded byte limit (max 800 bytes)",
+        ));
+    }
 
+    if slug.is_empty() {
+        return Err(AppError::bad_request("Slug is required"));
+    }
     if slug.len() > 100 {
         return Err(AppError::bad_request("Slug too long (max 100 characters)"));
     }
@@ -54,6 +62,11 @@ pub fn validate_font(
         if desc.graphemes(true).count() > 1000 {
             return Err(AppError::bad_request(
                 "Description too long (max 1000 characters)",
+            ));
+        }
+        if desc.len() > 8000 {
+            return Err(AppError::bad_request(
+                "Description exceeded byte limit (max 8000 bytes)",
             ));
         }
     }
@@ -80,6 +93,11 @@ pub fn validate_font(
                 "Changelog too long (max 1000 characters)",
             ));
         }
+        if changelog.len() > 8000 {
+            return Err(AppError::bad_request(
+                "Changelog exceeded byte limit (max 8000 bytes)",
+            ));
+        }
     }
 
     Ok(())
@@ -96,6 +114,11 @@ pub fn validate_snippet(
     if name.graphemes(true).count() > 100 {
         return Err(AppError::bad_request("Name too long (max 100 characters)"));
     }
+    if name.len() > 800 {
+        return Err(AppError::bad_request(
+            "Name exceeded byte limit (max 800 bytes)",
+        ));
+    }
     if name.is_inappropriate() {
         return Err(AppError::bad_request("Name contains inappropriate content"));
     }
@@ -108,6 +131,11 @@ pub fn validate_snippet(
         if desc.is_inappropriate() {
             return Err(AppError::bad_request(
                 "Description contains inappropriate content",
+            ));
+        }
+        if desc.len() > 4000 {
+            return Err(AppError::bad_request(
+                "Description exceeded byte limit (max 4000 bytes)",
             ));
         }
     }
