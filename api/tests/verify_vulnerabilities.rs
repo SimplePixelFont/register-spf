@@ -127,17 +127,40 @@ async fn test_point_2_revocation_id_hash_mismatch() {
     assert!(record.is_none(), "Token record must be deleted from DB");
 }
 
-#[test]
-fn test_point_8_error_leakage() {
-    use api::error::AppError;
+#[tokio::test]
+async fn test_point_8_error_leakage() {
+    use api::error::{AppError, ErrorResponse};
     use axum::response::IntoResponse;
+    use axum::body::to_bytes;
 
+    // Test unique constraint violation -> maps to HTTP 409 Conflict without leaking table/column
     let db_err = sea_orm::DbErr::Custom("Table 'access_tokens' column 'token' unique constraint violation".into());
     let app_err = AppError::Database(db_err);
     let resp = app_err.into_response();
-    assert_eq!(resp.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
-    // In error.rs:
-    // AppError::Database(err) => (..., "DATABASE_ERROR", err.to_string(), None)
-    // leaks exact DB table, column, and constraint error strings directly in response body!
+    assert_eq!(resp.status(), axum::http::StatusCode::CONFLICT);
+
+    let bytes = to_bytes(resp.into_body(), 1024 * 16).await.unwrap();
+    let body_str = String::from_utf8(bytes.to_vec()).unwrap();
+    let err_resp: ErrorResponse = serde_json::from_str(&body_str).unwrap();
+
+    assert_eq!(err_resp.error, "CONFLICT");
+    assert_eq!(err_resp.message, "Resource already exists");
+    assert!(!body_str.contains("access_tokens"), "Must not leak table name");
+    assert!(!body_str.contains("token"), "Must not leak column name");
+
+    // Test foreign key constraint mapping -> maps to HTTP 400 Bad Request
+    let fk_err = sea_orm::DbErr::Custom("FOREIGN KEY constraint failed".into());
+    let fk_resp = AppError::Database(fk_err).into_response();
+    assert_eq!(fk_resp.status(), axum::http::StatusCode::BAD_REQUEST);
+
+    // Test internal storage error masking -> maps to generic STORAGE_ERROR
+    let storage_err = AppError::Internal("R2 connection timeout to bucket fonts".into());
+    let storage_resp = storage_err.into_response();
+    assert_eq!(storage_resp.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    let bytes_storage = to_bytes(storage_resp.into_body(), 1024 * 16).await.unwrap();
+    let body_storage = String::from_utf8(bytes_storage.to_vec()).unwrap();
+    assert!(!body_storage.contains("fonts"), "Must not leak bucket name");
+    let parsed_storage: ErrorResponse = serde_json::from_str(&body_storage).unwrap();
+    assert_eq!(parsed_storage.error, "STORAGE_ERROR");
 }
 

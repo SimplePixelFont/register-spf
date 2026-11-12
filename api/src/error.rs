@@ -3,10 +3,10 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,
     pub message: String,
@@ -53,20 +53,62 @@ impl IntoResponse for AppError {
             AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, "UNAUTHORIZED", msg, None),
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, "FORBIDDEN", msg, None),
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, "NOT_FOUND", msg, None),
-            AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", msg, None),
+            AppError::Internal(msg) => {
+                tracing::error!(%msg, "Internal error");
+                let msg_lower = msg.to_lowercase();
+                if msg.contains("R2") || msg_lower.contains("storage") || msg_lower.contains("bucket") {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "STORAGE_ERROR",
+                        "An unexpected storage error occurred".to_string(),
+                        None,
+                    )
+                } else {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "INTERNAL_ERROR",
+                        "An internal server error occurred".to_string(),
+                        None,
+                    )
+                }
+            }
             AppError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED", msg, None),
-            AppError::Database(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DATABASE_ERROR",
-                err.to_string(),
-                None,
-            ),
-            AppError::SPF(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "SPF_ERROR",
-                format!("{:?}", err),
-                None,
-            ),
+            AppError::Database(err) => {
+                tracing::error!(%err, "Database error");
+                let err_msg = err.to_string();
+                let err_lower = err_msg.to_lowercase();
+                if err_msg.contains("UNIQUE constraint failed") || err_lower.contains("unique constraint") {
+                    (
+                        StatusCode::CONFLICT,
+                        "CONFLICT",
+                        "Resource already exists".to_string(),
+                        None,
+                    )
+                } else if err_msg.contains("FOREIGN KEY constraint failed") || err_lower.contains("foreign key") {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        "BAD_REQUEST",
+                        "Referenced entity does not exist".to_string(),
+                        None,
+                    )
+                } else {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "DATABASE_ERROR",
+                        "A database error occurred".to_string(),
+                        None,
+                    )
+                }
+            }
+            AppError::SPF(err) => {
+                tracing::error!(?err, "SPF parse error");
+                (
+                    StatusCode::BAD_REQUEST,
+                    "BAD_REQUEST",
+                    "Invalid SimplePixelFont format".to_string(),
+                    None,
+                )
+            }
             AppError::Auth(err) => {
                 let msg = match err {
                     AuthError::InvalidToken => "Invalid authentication token",
