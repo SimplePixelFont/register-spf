@@ -7,7 +7,7 @@ use crate::{
     },
     utilities::{
         AuthUser, create_api_key, create_session, create_user, is_unique_email, is_unique_username,
-        is_url_component_safe, list_user_tokens, revoke_token,
+        is_url_component_safe, list_user_tokens, revoke_token_by_id,
     },
 };
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
@@ -162,9 +162,9 @@ pub async fn get_my_tokens(
 pub async fn revoke_my_token(
     State(state): State<AppState>,
     auth: AuthUser,
-    Path(token_id): Path<i32>,
+    Path(token_id): Path<i64>,
 ) -> Result<StatusCode, AppError> {
-    revoke_token(&state.db, &token_id.to_string(), auth.id).await?;
+    revoke_token_by_id(&state.db, &state.auth_cache, token_id, auth.id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

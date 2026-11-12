@@ -25,11 +25,11 @@ use std::{env, net::SocketAddr, sync::Arc};
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 
-const PUBLIC_API_KEY: &str = "sk_public_abc123...";
-mod error;
-mod model;
-mod routes;
-mod utilities;
+pub const PUBLIC_API_KEY: &str = "sk_public_abc123...";
+pub mod error;
+pub mod model;
+pub mod routes;
+pub mod utilities;
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {

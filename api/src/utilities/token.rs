@@ -3,14 +3,12 @@ use crate::model::{TokenInfo, User};
 use crate::utilities::ratelimit::RateLimitTier;
 use crate::utilities::{AuthCache, CachedAuthUser};
 use ::entity::access_tokens;
-use argon2::password_hash::SaltString;
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use chrono::{DateTime, Duration, Utc};
-use password_hash::generate_salt;
 use rand::distr::Alphanumeric;
 use rand::{RngExt, rng};
 use sea_orm::DatabaseConnection;
 use sea_orm::*;
+use sha2::{Digest, Sha256};
 use std::time::Instant;
 
 const MAX_SESSIONS_PER_USER: usize = 10;
@@ -92,24 +90,19 @@ pub fn generate_token(token_type: &TokenType) -> String {
     format!("{}{}", prefix, random)
 }
 
+pub fn hash_token_sha256(token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 pub fn hash_token(token: &str) -> Result<String, TokenError> {
-    let salt = SaltString::encode_b64(&generate_salt()).unwrap();
-    let argon2 = Argon2::default();
-
-    let hash = argon2
-        .hash_password(token.as_bytes(), &salt)
-        .map_err(|_| TokenError::HashError)?
-        .to_string();
-
-    Ok(hash)
+    Ok(hash_token_sha256(token))
 }
 
 pub fn verify_token(token: &str, hash: &str) -> Result<bool, TokenError> {
-    let parsed_hash = PasswordHash::new(hash).map_err(|_| TokenError::InvalidHash)?;
-
-    Ok(Argon2::default()
-        .verify_password(token.as_bytes(), &parsed_hash)
-        .is_ok())
+    let token_hash = hash_token_sha256(token);
+    Ok(token_hash == hash)
 }
 
 pub async fn validate_token_cached(
@@ -117,20 +110,21 @@ pub async fn validate_token_cached(
     cache: &AuthCache,
     token: &str,
 ) -> Result<(User, TokenType), AppError> {
-    let token_hash = hash_token(token)?;
+    let token_hash = hash_token_sha256(token);
 
     if let Some(cached) = cache.get(&token_hash) {
         let user = User { id: cached.id };
         return Ok((user, cached.token_type));
     }
 
-    let (user, token_type) = validate_token_from_db(db, token).await?;
+    let (user, token_type, expires_at) = validate_token_from_db(db, token).await?;
 
     cache.set(
         token_hash,
         CachedAuthUser {
             id: user.id,
             token_type: token_type.clone(),
+            expires_at,
             cached_at: Instant::now(),
         },
     );
@@ -141,7 +135,7 @@ pub async fn validate_token_cached(
 pub async fn validate_token_from_db(
     db: &DatabaseConnection,
     token: &str,
-) -> Result<(User, TokenType), AppError> {
+) -> Result<(User, TokenType, Option<DateTime<Utc>>), AppError> {
     if token.len() < 4 {
         return Err(AppError::Auth(AuthError::InvalidToken));
     }
@@ -150,20 +144,14 @@ pub async fn validate_token_from_db(
     let token_type =
         TokenType::from_prefix(prefix).ok_or(AppError::Auth(AuthError::InvalidToken))?;
 
-    let possible_tokens = access_tokens::Entity::find()
+    let token_hash = hash_token_sha256(token);
+
+    let token_record = access_tokens::Entity::find()
+        .filter(access_tokens::Column::Token.eq(&token_hash))
         .filter(access_tokens::Column::TokenType.eq(token_type.as_str()))
-        .all(db)
-        .await?;
-
-    let mut matched_token = None;
-    for token_record in possible_tokens {
-        if verify_token(token, &token_record.token)? {
-            matched_token = Some(token_record);
-            break;
-        }
-    }
-
-    let token_record = matched_token.ok_or(AppError::Auth(AuthError::InvalidToken))?;
+        .one(db)
+        .await?
+        .ok_or(AppError::Auth(AuthError::InvalidToken))?;
 
     if let Some(expires_at) = token_record.expires_at {
         if Utc::now() > expires_at {
@@ -174,17 +162,12 @@ pub async fn validate_token_from_db(
     let token_type = TokenType::from_str(&token_record.token_type)
         .ok_or(AppError::Auth(AuthError::InvalidTokenType))?;
 
-    // Update last_used_at, maybe later, also update when the token is removed from the dashmap
-    // let mut active_token: access_tokens::ActiveModel = token_record.into();
-    // active_token.last_used_at = Set(Some(Utc::now()));
-
-    // active_token.update(db).await.ok();
-
     Ok((
         User {
             id: token_record.user_id,
         },
         token_type,
+        token_record.expires_at,
     ))
 }
 
@@ -255,17 +238,41 @@ pub async fn create_api_key(
     Ok(token)
 }
 
+pub async fn revoke_token_by_id(
+    db: &DatabaseConnection,
+    cache: &AuthCache,
+    token_id: i64,
+    user_id: i64,
+) -> Result<(), AppError> {
+    let token_record = access_tokens::Entity::find_by_id(token_id)
+        .filter(access_tokens::Column::UserId.eq(user_id))
+        .one(db)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Token not found or not owned by user".to_string()))?;
+
+    access_tokens::Entity::delete_by_id(token_id)
+        .exec(db)
+        .await?;
+
+    cache.invalidate(&token_record.token);
+
+    Ok(())
+}
+
 pub async fn revoke_token(
     db: &DatabaseConnection,
+    cache: &AuthCache,
     token: &str,
     user_id: i64,
 ) -> Result<(), AppError> {
-    let token_hash = hash_token(token)?;
+    let token_hash = hash_token_sha256(token);
     access_tokens::Entity::delete_many()
-        .filter(access_tokens::Column::Token.eq(token_hash))
+        .filter(access_tokens::Column::Token.eq(&token_hash))
         .filter(access_tokens::Column::UserId.eq(user_id))
         .exec(db)
         .await?;
+
+    cache.invalidate(&token_hash);
 
     Ok(())
 }
