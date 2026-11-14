@@ -7,16 +7,14 @@ use crate::{
     },
     utilities::{
         AuthUser, create_api_key, create_session, create_user, is_unique_email, is_unique_username,
-        is_url_component_safe, list_user_tokens, revoke_token,
+        is_url_component_safe, list_user_tokens, revoke_token_by_id, verify_password,
     },
 };
-use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::{
     Json,
     extract::{Path, State},
     http::StatusCode,
 };
-use check_if_email_exists::{CheckEmailInputBuilder, Reachable, check_email};
 use chrono::{Duration, Utc};
 use entity::users;
 use rustrict::CensorStr;
@@ -27,9 +25,9 @@ pub async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterRequest>,
 ) -> Result<Json<AuthResponse>, AppError> {
-    let username = &req.username;
+    let username = req.username.trim().to_lowercase();
+    let email = req.email.trim().to_lowercase();
     let password = &req.password;
-    let email = &req.email;
     let db = &state.db;
 
     if username.len() < 3 || username.len() > 30 {
@@ -37,7 +35,7 @@ pub async fn register(
             "Username must be between 3 and 30 characters",
         ));
     }
-    if !is_url_component_safe(username) {
+    if !is_url_component_safe(&username) {
         return Err(AppError::bad_request(
             "Username contains invalid characters",
         ));
@@ -56,33 +54,24 @@ pub async fn register(
         return Err(AppError::bad_request("Email address is invalid"));
     }
 
-    if !is_unique_username(username, db)
+    if !is_unique_username(&username, db)
         .await
         .map_err(AppError::from)?
     {
         return Err(AppError::bad_request("Username is already taken"));
     }
-    if !is_unique_email(email, db).await.map_err(AppError::from)? {
+    if !is_unique_email(&email, db).await.map_err(AppError::from)? {
         return Err(AppError::bad_request("Email address is already taken"));
     }
 
-    if !mailchecker::is_valid(&req.email) {
+    if !mailchecker::is_valid(&email) {
         return Err(AppError::with_context(
             "Email provider not allowed",
             json!({ "reason": "disposable_provider" }),
         ));
     }
 
-    let input = CheckEmailInputBuilder::default()
-        .to_email(req.email.clone())
-        .build()
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let result = check_email(&input).await;
-    if !(result.is_reachable == Reachable::Safe) {
-        return Err(AppError::bad_request("Email address is not reachable"));
-    }
-
-    let user = create_user(&state.db, &req.username, &req.email, &req.password).await?;
+    let user = create_user(&state.db, &username, &email, password).await?;
     let token = create_session(&state.db, user.id).await?;
 
     Ok(Json(AuthResponse {
@@ -103,23 +92,30 @@ pub async fn authenticate_user(
 ) -> Result<users::Model, AppError> {
     use sea_orm::*;
 
-    let user = users::Entity::find()
-        .filter(users::Column::Email.eq(email))
+    const DUMMY_ARGON2_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQAAAAAAAAAAA$iEOsWw2FkP+H2L7t2hI8g6tqZ1x0e4s8f9q2b5v1w0A";
+
+    let email_normalized = email.trim().to_lowercase();
+
+    let user_opt = users::Entity::find()
+        .filter(users::Column::Email.eq(&email_normalized))
         .one(db)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized("Invalid credentials".to_string()))?;
+        .await?;
 
-    let parsed_hash = PasswordHash::new(&user.password_hash)
-        .map_err(|_| AppError::Internal("Security hash error".to_string()))?;
-
-    if !(Argon2::default()
-        .verify_password(password.as_bytes(), &parsed_hash)
-        .is_ok())
-    {
-        return Err(AppError::Unauthorized("Invalid credentials".to_string()));
+    match user_opt {
+        Some(user) => {
+            let valid = verify_password(password.to_string(), user.password_hash.clone()).await?;
+            if !valid {
+                return Err(AppError::Unauthorized("Invalid credentials".to_string()));
+            }
+            Ok(user)
+        }
+        None => {
+            verify_password(password.to_string(), DUMMY_ARGON2_HASH.to_string())
+                .await
+                .ok();
+            Err(AppError::Unauthorized("Invalid credentials".to_string()))
+        }
     }
-
-    Ok(user)
 }
 
 pub async fn login(
@@ -162,9 +158,9 @@ pub async fn get_my_tokens(
 pub async fn revoke_my_token(
     State(state): State<AppState>,
     auth: AuthUser,
-    Path(token_id): Path<i32>,
+    Path(token_id): Path<i64>,
 ) -> Result<StatusCode, AppError> {
-    revoke_token(&state.db, &token_id.to_string(), auth.id).await?;
+    revoke_token_by_id(&state.db, &state.auth_cache, token_id, auth.id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

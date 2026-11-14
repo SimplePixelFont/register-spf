@@ -2,6 +2,7 @@ pub use sea_orm_migration::prelude::*;
 
 mod m20220101_000001_create_table;
 mod m20260820_000001_create_snippets_table;
+mod m20261112_000001_add_user_favorites_unique_index;
 
 pub struct Migrator;
 
@@ -11,6 +12,7 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20220101_000001_create_table::Migration),
             Box::new(m20260820_000001_create_snippets_table::Migration),
+            Box::new(m20261112_000001_add_user_favorites_unique_index::Migration),
         ]
     }
 }

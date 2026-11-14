@@ -14,7 +14,7 @@ use axum::{
 };
 use routes::{
     comment::{create_comment, delete_comment, get_comments},
-    favorite::add_favorite,
+    favorite::{add_favorite, remove_favorite},
     font::{create_font, delete_font, get_font_with_details, search_fonts},
     snippet::{create_snippet, delete_snippet, get_snippet, search_snippets},
     user::{create_user_api_key, get_my_tokens, register, revoke_my_token},
@@ -25,11 +25,11 @@ use std::{env, net::SocketAddr, sync::Arc};
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 
-const PUBLIC_API_KEY: &str = "sk_public_abc123...";
-mod error;
-mod model;
-mod routes;
-mod utilities;
+pub const PUBLIC_API_KEY: &str = "sk_public_abc123...";
+pub mod error;
+pub mod model;
+pub mod routes;
+pub mod utilities;
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -73,7 +73,7 @@ fn font_routes(state: AppState) -> Router<AppState> {
         .route("/search", get(search_fonts))
         .route("/{slug}", get(get_font_with_details))
         .route("/{slug}", delete(delete_font))
-        .route("/{id}/favorite", post(add_favorite))
+        .route("/{id}/favorite", post(add_favorite).delete(remove_favorite))
 }
 
 fn comment_routes(state: AppState) -> Router<AppState> {

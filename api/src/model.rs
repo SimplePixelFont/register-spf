@@ -105,6 +105,7 @@ pub struct SearchQuery {
     pub query: Option<String>,
     pub tags: Option<String>,
     pub limit: Option<i64>,
+    pub page: Option<u64>,
 }
 
 #[derive(Deserialize)]
