@@ -90,18 +90,18 @@ pub fn generate_token(token_type: &TokenType) -> String {
     format!("{}{}", prefix, random)
 }
 
-pub fn hash_token_sha256(token: &str) -> String {
+pub fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
-    hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect()
-}
-
-pub fn hash_token(token: &str) -> Result<String, TokenError> {
-    Ok(hash_token_sha256(token))
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
 }
 
 pub fn verify_token(token: &str, hash: &str) -> Result<bool, TokenError> {
-    let token_hash = hash_token_sha256(token);
+    let token_hash = hash_token(token);
     Ok(token_hash == hash)
 }
 
@@ -110,7 +110,7 @@ pub async fn validate_token_cached(
     cache: &AuthCache,
     token: &str,
 ) -> Result<(User, TokenType), AppError> {
-    let token_hash = hash_token_sha256(token);
+    let token_hash = hash_token(token);
 
     if let Some(cached) = cache.get(&token_hash) {
         let user = User { id: cached.id };
@@ -144,7 +144,7 @@ pub async fn validate_token_from_db(
     let token_type =
         TokenType::from_prefix(prefix).ok_or(AppError::Auth(AuthError::InvalidToken))?;
 
-    let token_hash = hash_token_sha256(token);
+    let token_hash = hash_token(token);
 
     let token_record = access_tokens::Entity::find()
         .filter(access_tokens::Column::Token.eq(&token_hash))
@@ -173,7 +173,7 @@ pub async fn validate_token_from_db(
 
 pub async fn create_session(db: &DatabaseConnection, user_id: i64) -> Result<String, AppError> {
     let token = generate_token(&TokenType::Session);
-    let token_hash = hash_token(&token)?;
+    let token_hash = hash_token(&token);
 
     let existing_sessions = access_tokens::Entity::find()
         .filter(access_tokens::Column::UserId.eq(user_id))
@@ -184,7 +184,9 @@ pub async fn create_session(db: &DatabaseConnection, user_id: i64) -> Result<Str
 
     if existing_sessions.len() >= MAX_SESSIONS_PER_USER {
         if let Some(oldest) = existing_sessions.first() {
-            access_tokens::Entity::delete_by_id(oldest.id).exec(db).await?;
+            access_tokens::Entity::delete_by_id(oldest.id)
+                .exec(db)
+                .await?;
         }
     }
 
@@ -210,7 +212,7 @@ pub async fn create_api_key(
     name: String,
 ) -> Result<String, AppError> {
     let token = generate_token(&TokenType::ApiKey);
-    let token_hash = hash_token(&token)?;
+    let token_hash = hash_token(&token);
 
     let api_key_count = access_tokens::Entity::find()
         .filter(access_tokens::Column::UserId.eq(user_id))
@@ -219,7 +221,10 @@ pub async fn create_api_key(
         .await?;
 
     if api_key_count >= MAX_API_KEYS_PER_USER as u64 {
-        return Err(AppError::Forbidden(format!("Maximum limit of {} API keys reached. Please revoke an existing key first.", MAX_API_KEYS_PER_USER)));
+        return Err(AppError::Forbidden(format!(
+            "Maximum limit of {} API keys reached. Please revoke an existing key first.",
+            MAX_API_KEYS_PER_USER
+        )));
     }
 
     let api_key = access_tokens::ActiveModel {
@@ -265,7 +270,7 @@ pub async fn revoke_token(
     token: &str,
     user_id: i64,
 ) -> Result<(), AppError> {
-    let token_hash = hash_token_sha256(token);
+    let token_hash = hash_token(token);
     access_tokens::Entity::delete_many()
         .filter(access_tokens::Column::Token.eq(&token_hash))
         .filter(access_tokens::Column::UserId.eq(user_id))
