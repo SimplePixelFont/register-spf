@@ -148,7 +148,7 @@ pub async fn validate_token_cached(
         {
             spawn_update_token_last_used(db.clone(), token_id);
         }
-        let user = User { id: cached.id };
+        let user = User { id: cached.user_id };
         return Ok((user, cached.token_type));
     }
 
@@ -169,7 +169,7 @@ pub async fn validate_token_cached(
         token_hash,
         CachedAuthUser {
             token_id: validated.token_id,
-            id: validated.user_id,
+            user_id: validated.user_id,
             token_type: validated.token_type.clone(),
             expires_at: validated.expires_at,
             cached_at: Instant::now(),

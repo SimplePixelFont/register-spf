@@ -10,7 +10,7 @@ use crate::utilities::token::TokenType;
 #[derive(Clone, Debug)]
 pub struct CachedAuthUser {
     pub token_id: i64,
-    pub id: i64,
+    pub user_id: i64,
     pub token_type: TokenType,
     pub expires_at: Option<DateTime<Utc>>,
     pub cached_at: Instant,
@@ -65,7 +65,7 @@ impl AuthCache {
     }
 
     pub fn invalidate_user(&self, user_id: i64) {
-        self.cache.retain(|_, cached| cached.id != user_id);
+        self.cache.retain(|_, cached| cached.user_id != user_id);
     }
 
     pub fn try_record_token_use(&self, token_hash: &str, throttle_secs: i64) -> Option<i64> {
