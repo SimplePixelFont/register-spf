@@ -9,7 +9,11 @@ use rand::{RngExt, rng};
 use sea_orm::DatabaseConnection;
 use sea_orm::*;
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
+use std::sync::atomic::AtomicI64;
 use std::time::Instant;
+
+pub const DEFAULT_LAST_USED_THROTTLE_SECS: i64 = 300;
 
 const MAX_SESSIONS_PER_USER: usize = 10;
 const MAX_API_KEYS_PER_USER: usize = 3;
@@ -105,6 +109,32 @@ pub fn verify_token(token: &str, hash: &str) -> Result<bool, TokenError> {
     Ok(token_hash == hash)
 }
 
+#[derive(Debug, Clone)]
+pub struct ValidatedToken {
+    pub token_id: i64,
+    pub user_id: i64,
+    pub token_type: TokenType,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub last_used_at: Option<DateTime<Utc>>,
+}
+
+pub fn spawn_update_token_last_used(db: DatabaseConnection, token_id: i64) {
+    tokio::spawn(async move {
+        let now = Utc::now();
+        let res = access_tokens::Entity::update_many()
+            .col_expr(
+                access_tokens::Column::LastUsedAt,
+                sea_orm::sea_query::Expr::value(now),
+            )
+            .filter(access_tokens::Column::Id.eq(token_id))
+            .exec(&db)
+            .await;
+        if let Err(err) = res {
+            tracing::warn!("Failed to update token last_used_at in background: {}", err);
+        }
+    });
+}
+
 pub async fn validate_token_cached(
     db: &DatabaseConnection,
     cache: &AuthCache,
@@ -113,29 +143,52 @@ pub async fn validate_token_cached(
     let token_hash = hash_token(token);
 
     if let Some(cached) = cache.get(&token_hash) {
+        if let Some(token_id) =
+            cache.try_record_token_use(&token_hash, DEFAULT_LAST_USED_THROTTLE_SECS)
+        {
+            spawn_update_token_last_used(db.clone(), token_id);
+        }
         let user = User { id: cached.id };
         return Ok((user, cached.token_type));
     }
 
-    let (user, token_type, expires_at) = validate_token_from_db(db, token).await?;
+    let validated = validate_token_from_db(db, token).await?;
+
+    let now_ts = Utc::now().timestamp();
+    let last_db_ts = validated.last_used_at.map(|t| t.timestamp()).unwrap_or(0);
+    let should_update = (now_ts - last_db_ts) >= DEFAULT_LAST_USED_THROTTLE_SECS;
+
+    let initial_synced_ts = if should_update {
+        spawn_update_token_last_used(db.clone(), validated.token_id);
+        now_ts
+    } else {
+        last_db_ts
+    };
 
     cache.set(
         token_hash,
         CachedAuthUser {
-            id: user.id,
-            token_type: token_type.clone(),
-            expires_at,
+            token_id: validated.token_id,
+            id: validated.user_id,
+            token_type: validated.token_type.clone(),
+            expires_at: validated.expires_at,
             cached_at: Instant::now(),
+            last_synced_timestamp: Arc::new(AtomicI64::new(initial_synced_ts)),
         },
     );
 
-    Ok((user, token_type))
+    Ok((
+        User {
+            id: validated.user_id,
+        },
+        validated.token_type,
+    ))
 }
 
 pub async fn validate_token_from_db(
     db: &DatabaseConnection,
     token: &str,
-) -> Result<(User, TokenType, Option<DateTime<Utc>>), AppError> {
+) -> Result<ValidatedToken, AppError> {
     if token.len() < 4 {
         return Err(AppError::Auth(AuthError::InvalidToken));
     }
@@ -162,13 +215,13 @@ pub async fn validate_token_from_db(
     let token_type = TokenType::from_str(&token_record.token_type)
         .ok_or(AppError::Auth(AuthError::InvalidTokenType))?;
 
-    Ok((
-        User {
-            id: token_record.user_id,
-        },
+    Ok(ValidatedToken {
+        token_id: token_record.id,
+        user_id: token_record.user_id,
         token_type,
-        token_record.expires_at,
-    ))
+        expires_at: token_record.expires_at,
+        last_used_at: token_record.last_used_at,
+    })
 }
 
 pub async fn create_session(db: &DatabaseConnection, user_id: i64) -> Result<String, AppError> {

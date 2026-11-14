@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Instant;
 
 use chrono::{DateTime, Duration, TimeDelta, Utc};
@@ -7,10 +9,12 @@ use crate::utilities::token::TokenType;
 
 #[derive(Clone, Debug)]
 pub struct CachedAuthUser {
+    pub token_id: i64,
     pub id: i64,
     pub token_type: TokenType,
     pub expires_at: Option<DateTime<Utc>>,
     pub cached_at: Instant,
+    pub last_synced_timestamp: Arc<AtomicI64>,
 }
 
 impl CachedAuthUser {
@@ -62,6 +66,23 @@ impl AuthCache {
 
     pub fn invalidate_user(&self, user_id: i64) {
         self.cache.retain(|_, cached| cached.id != user_id);
+    }
+
+    pub fn try_record_token_use(&self, token_hash: &str, throttle_secs: i64) -> Option<i64> {
+        if let Some(entry) = self.cache.get(token_hash) {
+            let now_ts = Utc::now().timestamp();
+            let prev = entry.last_synced_timestamp.load(Ordering::Relaxed);
+            if now_ts - prev >= throttle_secs {
+                if entry
+                    .last_synced_timestamp
+                    .compare_exchange(prev, now_ts, Ordering::SeqCst, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    return Some(entry.token_id);
+                }
+            }
+        }
+        None
     }
 
     pub fn cleanup(&self) {
